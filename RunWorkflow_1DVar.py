@@ -17,14 +17,12 @@ import netCDF4 as nc
 
 Q = 0
 def assim_currents(X, currents_object, obs, i):
-    #print("current object crosshore location ", currents_object['xFRF'])
     awac_value, awac_indice = find_nearest(X, currents_object['xFRF'])
-    obs['v']['d'] = np.append(obs['v']['d'], matlab.float64([currents_object['aveN'][i]]))
-    obs['v']['ind'] = np.append(obs['v']['ind'], matlab.float64([awac_indice]))
+    obs['v']['d'] = np.append(obs['v']['d'], (matlab.float64([currents_object['aveV'][i]])))
+    obs['v']['ind'] = np.append(obs['v']['ind'], (matlab.float64([awac_indice])))
     return obs
 
 def assim_waves(X, waves_object, obs, i):
-    #print("waves object crosshore location ", waves_object['xFRF'])
     hs_value, hs_indice = find_nearest(X, waves_object['xFRF'])
     obs['H']['d'] = np.append(obs['H']['d'], (matlab.float64([waves_object['Hs'][i]])))
     obs['H']['ind'] = np.append(obs['H']['ind'], (matlab.float64([hs_indice])))
@@ -111,30 +109,42 @@ def Master_1DVar_run(inputDict):
     # fileHandling.displayStartInfo(projectStart, projectEnd, version_prefix, LOG_FILENAME, model)
     # ______________________________gather all data _____________________________
     if generateFlag == True:
-        go = getObs(projectStart, projectEnd, server='chl')  # initialize get observation
+        go = getObs(projectStart, projectEnd)  # initialize get observation
         bathygo = getDataTestBed(projectStart, projectEnd)
         #bathyTransect = bathygo.getBathyTransectFromNC(method=1)  # grab bathymetry transects
         bathyTransect = bathygo.getBathyIntegratedTransect(method=1)  # grab bathymetry transects
 
+        pier_wind = go.getWind()
+
         adop_35m_currents = go.getCurrents(gaugenumber='adop-3.5m', roundto=1)
         awac_45m_currents = go.getCurrents(gaugenumber='awac-4.5m', roundto=1)
         awac_6m_currents = go.getCurrents(gaugenumber='awac-6m', roundto=1)
-        awac_8m_currents = go.getCurrents(gaugenumber='awac-8m', roundto=1)
+        #awac_8m_currents = go.getCurrents(gaugenumber='awac-8m', roundto=1)
         #awac_11m_currents = go.getCurrents(gaugenumber='awac-11m', roundto=1)
 
+        spec100m = go.getWaveSpec(gaugenumber='xp100m', specOnly=False)  # grab 100m array observations
         spec125m = go.getWaveSpec(gaugenumber='xp125m', specOnly=False)  # grab 125m pressure array obs
-        spec150m = go.getWaveSpec(gaugenumber='xp150m', specOnly=False)  # grab 150m pressure array obs
+        #spec150m = go.getWaveSpec(gaugenumber='xp150m', specOnly=False)  # grab 150m pressure array obs
+        spec150m = None
         spec200m = go.getWaveSpec(gaugenumber='xp200m', specOnly=False)  # grab 200m pressure array obs
         spec8m = go.getWaveSpec(gaugenumber='8m-array', specOnly=False)  # grab 8m array observations
 
-        h = bathyTransect['elevation'][200,45:]
-        X = np.linspace(0, np.max(bathyTransect['xFRF']), len(h))
-        delta_t = spec8m['time'][0] - bathyTransect['time']
-        delta_t = delta_t.seconds
+
+        speed = pier_wind['windspeed']
+        direc = np.deg2rad(pier_wind['winddir']-71.8)
+        cd = 0.002 #reniers et al. 2004
+        tauw = cd*(speed**2)*np.cos(direc)
+        wind_indice_skip = len(tauw)/len(dateStringList)
+
+        h = bathyTransect['elevation'][200,35:]
+        X = np.linspace(35, np.max(bathyTransect['xFRF']), len(h))
+
+        delta_t = spec8m['epochtime'][0] - bathyTransect['time'].timestamp() #in days
+
         # load example mat file to populate prior and observations with data for model run
         input = octave.load('./data/waveModels/1DVar/input_oct.mat')
         prior = input['prior']
-        obs = input['obs']
+
         X = np.reshape(X, (len(X), 1))
         h = np.reshape(h, (len(h), 1))
         Q=0
@@ -146,14 +156,18 @@ def Master_1DVar_run(inputDict):
         # Prior.Cka is constant
         prior['x'] = X  # populate with bathy cross-shore distance data
         prior['h'] = -h  # populate with elevation data
-        prior['hErr'] = -h / 2  # populate with elevation error data (h/2 for now)
-        orig_obs_h = obs['H']['e']
-        orig_obs_v = obs['v']['e']
-        orig_obs_tauw = obs['tauw']['e']
+        prior['hErr'] = .1 # populate with elevation error data .1
+
+        obs_indices_h = []
+        obs_indices_v = []
+
     # ________________________________________________ RUN LOOP ________________________________________________
     i = 0
     print(dateStringList)
     for time in dateStringList:
+        obs = input['obs']
+        obs['tauw'] = tauw[0]
+        print(obs['tauw'])
         try:
             print('-------------------------------Beginning Simulation {}-------------------------------'.format(
                 DT.datetime.now()))
@@ -164,13 +178,18 @@ def Master_1DVar_run(inputDict):
                 print('Running {} Simulation'.format(model.upper()))
                 dt = DT.datetime.now()
 
-                prior['theta0'] = spec8m['waveDp'][i]*(3.1415/180)  # populate with theta0 data
+                prior['theta0'] = np.deg2rad(spec8m['waveDp'][i]-71.8)  # populate with theta0 data
                 prior['H0'] = spec8m['Hs'][i]  # populate with offshore wave height data
                 prior['sigma'] = 2 * np.pi * spec8m['peakf'][i]  # calculate offshore sigma value"""
                 print("theta: ", prior['theta0'])
                 # select indices of bathymetry where we have Hs measurements
                 obs['H']['d'] = []
                 obs['H']['ind'] = []
+                if spec100m != None:
+                    try:
+                        obs = assim_waves(X, spec100m, obs, i)
+                    except:
+                        pass
                 if spec125m != None:
                     try:
                         obs = assim_waves(X, spec125m, obs, i)
@@ -192,7 +211,8 @@ def Master_1DVar_run(inputDict):
                     except:
                         pass
 
-                obs['H']['e'] = orig_obs_h
+                for obs_timestep_ind in obs['H']['ind']:
+                    obs_indices_h.append(obs_timestep_ind)
                 try:
                     obs['H']['e'] = matlab.float64(obs['H']['e'][0][:len(obs['H']['d'])])
                 except:
@@ -204,7 +224,6 @@ def Master_1DVar_run(inputDict):
                 # select indices of bathymetry where we have v measurements
                 obs['v']['d'] = []
                 obs['v']['ind'] = []
-                obs['v']['e'] = orig_obs_v
                 if adop_35m_currents != None:
                     try:
                         obs = assim_currents(X, adop_35m_currents, obs, i)
@@ -220,26 +239,28 @@ def Master_1DVar_run(inputDict):
                         obs = assim_currents(X, awac_6m_currents, obs, i)
                     except:
                         pass
-                if awac_8m_currents != None:
+                """if awac_8m_currents != None:
                     try:
                         obs = assim_currents(X, awac_8m_currents, obs, i)
                     except:
-                        pass
+                        pass"""
                 #if awac_11m_currents != None:
                     #obs = assim_currents(X, awac_11m_currents, obs, i)
 
+                for obs_timestep_ind in obs['v']['ind']:
+                    obs_indices_v.append(obs_timestep_ind)
                 try:
                     obs['v']['e'] = matlab.float64(obs['v']['e'][0][:len(obs['v']['d'])])
                 except:
                     obs['v']['e'] = matlab.float64(obs['v']['e'][:len(obs['v']['d'])])
+
                 print("Currents to Assimilate: ", obs['v']['d'])
                 print("Current Indices to Assimilate: ", obs['v']['ind'])
                 print("Current Errors to Assimilate: ", obs['v']['e'])
 
+                obs['tauw'] = tauw[int((i+1)*wind_indice_skip)]
 
                 posterior, diagnostics = octave.feval('C:/cmtb/bin/1DVar/assim_1dh.m', prior, obs, 1, nout=2)#, representers = \
-
-
                 print('Simulation took %s ' % (DT.datetime.now() - dt))
 
             prior = posterior
@@ -258,26 +279,63 @@ def Master_1DVar_run(inputDict):
             logging.exception('\nERROR FOUND @ {}\n'.format(time), exc_info=True)
             os.chdir(modeldir)
 
-
-    print(posterior['herr'])
+    obs_indices_h = np.unique(obs_indices_h)
+    obs_indices_v = np.unique(obs_indices_v)
+    print("Data assimilated at crosshore locations:")
+    print(obs_indices_h*(X[-1]/len(h)))
+    print(obs_indices_v*(X[-1]/len(h)))
+    Q = np.squeeze(np.transpose(Q))
     fig = plt.figure(figsize=(6, 9))
-    grid = gridspec.GridSpec(1, 3, figure=fig)
+    grid = gridspec.GridSpec(2, 2, figure=fig)
     ax0 = fig.add_subplot(grid[0, 0])
     ax0.set_title("Prior")
-    ax0.set_ylim(ymax=-1, ymin=-6)
-    ax0.set_xlabel("Crosshore distance")
+    ax0.set_ylim(ymax=0, ymin=-11)
+    ax0.set_xlabel("Crosshore distance (m)")
     ax0.set_ylabel("Depth")
-    ax0.set_xlim(xmax=80)
+    ax0.set_xlim(xmax=1000)
+    ax0.plot(X, h, color='black')
+    for obs_loc in obs_indices_h:
+        ax0.axvline(x=obs_loc*(X[-1]/len(h)), color='r', linestyle='--')
+    for obs_loc in obs_indices_v:
+        ax0.axvline(x=obs_loc*(X[-1]/len(h)), color='orange', linestyle='--')
+
     ax1 = fig.add_subplot(grid[0, 1])
     ax1.set_title("Posterior")
-    ax1.set_xlabel("Crosshore distance")
+    ax1.set_xlabel("Crosshore distance (m)")
     ax1.set_ylabel("Depth")
-    ax1.set_ylim(ymax=-1, ymin=-6)
-    ax1.set_xlim(xmax=80)
-    ax0.plot(h)
-    ax1.plot(-posterior['h'])
-    ax2 = fig.add_subplot(grid[0, 2])
-    ax2.scatter(X, h+posterior['h'])
+    ax1.set_ylim(ymax=0, ymin=-11)
+    ax1.set_xlim(xmax=1000)
+
+    ax1.errorbar(X, -posterior['h'], yerr=np.squeeze(posterior['hErr']), color='black', errorevery=5, capsize=2, ecolor='pink')
+    #ax1.plot(X, -posterior['h'], color='black')
+
+    for obs_loc in obs_indices_h:
+        ax1.axvline(x=obs_loc*(X[-1]/len(h)), color='r', linestyle='--')
+    for obs_loc in obs_indices_v:
+        ax1.axvline(x=obs_loc*(X[-1]/len(h)), color='orange', linestyle='--')
+
+    ax2 = fig.add_subplot(grid[1, 0])
+    ax2.set_title("prior - posterior")
+    ax2.scatter(X, h+posterior['h'], color="black")
+    ax2.set_xlabel("Crosshore distance (m)")
+    ax2.set_ylabel("Elevation change (m)")
+    ax2.set_xlim(xmax=1000)
+
+    for obs_loc in obs_indices_h:
+        ax2.axvline(x=obs_loc*(X[-1]/len(h)), color='r', linestyle='--')
+        temp = obs_loc
+    ax2.axvline(x=temp * (X[-1] / len(h)), color='r', linestyle='--', label="wave heights")
+    for obs_loc in obs_indices_v:
+        ax2.axvline(x=obs_loc*(X[-1]/len(h)), color='orange', linestyle='--')
+        temp = obs_loc
+    ax2.axvline(x=temp * (X[-1] / len(h)), color='orange', linestyle='--', label="currents")
+
+    ax2.legend()
+
+    ax3 = fig.add_subplot(grid[1, 1])
+    ax3.plot(X, Q)
+    ax3.set_title("Q")
+    #plt.subplots_adjust(hspace=.25)
     plt.show()
 
 if __name__ == "__main__":

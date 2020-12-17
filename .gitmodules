@@ -1,9 +1,9 @@
 [submodule "getdatatestbed"]
 	path = getdatatestbed
-	url = git@github.com:SBFRF/getdatatestbed.git
+	url = https://github.com/SBFRF/getdatatestbed.git
 [submodule "testbedutils"]
 	path = testbedutils
-	url = git@github.com:SBFRF/testbedutils.git
+	url = https://github.com/SBFRF/testbedutils.git
 [submodule "prepdata"]
 	path = prepdata
-	url = git@github.com:SBFRF/prepdata.git
+	url = https://github.com/SBFRF/prepdata.git
