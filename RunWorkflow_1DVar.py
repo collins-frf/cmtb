@@ -17,22 +17,62 @@ import netCDF4 as nc
 
 Q = 0
 def assim_currents(X, currents_object, obs, i):
+    """Assimilates currents from the FRF-pulled current object into the format to be added to matlab observations matfile
+
+    Args:
+        X: gridded crosshore distance data
+        currents_object: object returned from getWaveSpec in FRFgetData
+        obs: matfile containing observation data from example input
+        i: simulation number (to full different observation from waves_object at each time step
+
+    Returns:
+        obs with new wave height data and indices written into it from current simulation timestep
+
+    """
+
     awac_value, awac_indice = find_nearest(X, currents_object['xFRF'])
     obs['v']['d'] = np.append(obs['v']['d'], (matlab.float64([currents_object['aveV'][i]])))
     obs['v']['ind'] = np.append(obs['v']['ind'], (matlab.float64([awac_indice])))
     return obs
 
 def assim_waves(X, waves_object, obs, i):
+    """Assimilates waves from the FRF-pulled waves objecst into the format to be added to matlab observations matfile
+
+    Args:
+        X: gridded crosshore distance data
+        waves_object: object returned from getWaveSpec in FRFgetData
+        obs: matfile containing observation data from example input
+        i: simulation number (to full different observation from waves_object at each time step
+
+    Returns:
+        obs with new wave height data and indices written into it from current simulation timestep
+
+    """
+
     hs_value, hs_indice = find_nearest(X, waves_object['xFRF'])
     obs['H']['d'] = np.append(obs['H']['d'], (matlab.float64([waves_object['Hs'][i]])))
     obs['H']['ind'] = np.append(obs['H']['ind'], (matlab.float64([hs_indice])))
     return obs
 
 def calculate_Ch(prior, spec8m, X, delta_t, Q):
-    # calculate Q(x,t) (measured process error) according to holman et al 2013
-    # Q = Cq * Hmo ^ (-[(x-x0)/sigma_x]^2)
-    # deltat is difference from survey to assimilation step;
-    # add q each time-step to increase uncertainty as the Ch decreases in posterior posterior.ch + new S *N *S with just the tiny delta_t
+    """calculate Q(x,t) (measured process error) according to holman et al 2013
+    Q = Cq * Hmo ^ (-[(x-x0)/sigma_x]^2)
+    deltat is difference from survey to assimilation step;
+    add q each time-step to increase uncertainty as the Ch decreases in posterior
+    posterior.ch + new S *N *S with just the tiny delta_t
+
+    Args:
+        prior: the prior matfile to write Ch to
+        spec8m: offshore wave spectra object
+        X: gridded distance data in crosshore
+        delta_t: time difference in seconds between last simulation (or last measured bathy) and current timestep
+        Q: defined above
+
+    Returns:
+        prior: with newly written Ch
+        Q: old Q + new Q
+    """
+
     Cq = 0.067  # from sandy duck experiment
     Hmo = np.mean(spec8m['Hs'])  # significant wave height of highest 1/3 of waves
     x0 = 50  # x0 and sigma_x reflect the typical location of breaking waves at this particular beach
@@ -50,12 +90,21 @@ def calculate_Ch(prior, spec8m, X, delta_t, Q):
     return prior, Q
 
 def find_nearest(array, value):
+    """This function will run CMS with any version prefix given start, end, and timestep.
+
+    Args:
+      inputDict: a dictionary that is read from the input yaml
+
+    Returns:
+      None
+
+    """
     array = np.asarray(array)
     idx = (np.abs(array - value)).argmin()
     return array[idx], idx
 
 def Master_1DVar_run(inputDict):
-    """This function will run CMS with any version prefix given start, end, and timestep.
+    """This function will run 1DVar given start, end, and timestep found in input yaml
 
     Args:
       inputDict: a dictionary that is read from the input yaml
@@ -109,19 +158,25 @@ def Master_1DVar_run(inputDict):
     # fileHandling.displayStartInfo(projectStart, projectEnd, version_prefix, LOG_FILENAME, model)
     # ______________________________gather all data _____________________________
     if generateFlag == True:
-        go = getObs(projectStart, projectEnd)  # initialize get observation
+        # initialize get observation for measurements
+        go = getObs(projectStart, projectEnd)
+
+        #initiliaze get observation for bathymetry
         bathygo = getDataTestBed(projectStart, projectEnd)
         #bathyTransect = bathygo.getBathyTransectFromNC(method=1)  # grab bathymetry transects
         bathyTransect = bathygo.getBathyIntegratedTransect(method=1)  # grab bathymetry transects
 
+        # pull wind data
         pier_wind = go.getWind()
 
+        #pull currents data
         adop_35m_currents = go.getCurrents(gaugenumber='adop-3.5m', roundto=1)
         awac_45m_currents = go.getCurrents(gaugenumber='awac-4.5m', roundto=1)
         awac_6m_currents = go.getCurrents(gaugenumber='awac-6m', roundto=1)
         #awac_8m_currents = go.getCurrents(gaugenumber='awac-8m', roundto=1)
         #awac_11m_currents = go.getCurrents(gaugenumber='awac-11m', roundto=1)
 
+        #pull waves data
         spec100m = go.getWaveSpec(gaugenumber='xp100m', specOnly=False)  # grab 100m array observations
         spec125m = go.getWaveSpec(gaugenumber='xp125m', specOnly=False)  # grab 125m pressure array obs
         #spec150m = go.getWaveSpec(gaugenumber='xp150m', specOnly=False)  # grab 150m pressure array obs
@@ -129,16 +184,19 @@ def Master_1DVar_run(inputDict):
         spec200m = go.getWaveSpec(gaugenumber='xp200m', specOnly=False)  # grab 200m pressure array obs
         spec8m = go.getWaveSpec(gaugenumber='8m-array', specOnly=False)  # grab 8m array observations
 
-
+        #calculate tauw
         speed = pier_wind['windspeed']
         direc = np.deg2rad(pier_wind['winddir']-71.8)
         cd = 0.002 #reniers et al. 2004
         tauw = cd*(speed**2)*np.cos(direc)
         wind_indice_skip = len(tauw)/len(dateStringList)
 
+        # restrict bathy to only include points after indice 35,
+        # TODO: figure out why including indices before this gives fzero problems in the assim_1dh.m
         h = bathyTransect['elevation'][200,35:]
         X = np.linspace(35, np.max(bathyTransect['xFRF']), len(h))
 
+        #calculate initial delta_t where it is elapsed time since the bathy was measured to first simulation timestep
         delta_t = spec8m['epochtime'][0] - bathyTransect['time'].timestamp() #in days
 
         # load example mat file to populate prior and observations with data for model run
@@ -148,7 +206,10 @@ def Master_1DVar_run(inputDict):
         X = np.reshape(X, (len(X), 1))
         h = np.reshape(h, (len(h), 1))
         Q=0
+
+        #calculcate Ch
         prior, Q = calculate_Ch(prior, spec8m, X, delta_t, Q)
+
         # populate prior with data
         # Prior.ka_drag is constant
         # Prior.Ctheta0 is constant
@@ -156,8 +217,9 @@ def Master_1DVar_run(inputDict):
         # Prior.Cka is constant
         prior['x'] = X  # populate with bathy cross-shore distance data
         prior['h'] = -h  # populate with elevation data
-        prior['hErr'] = .1 # populate with elevation error data .1
+        prior['hErr'] = .1 # populate with elevation error data currently using .1 m
 
+        #create lists for storing locations of observations for plotting
         obs_indices_h = []
         obs_indices_v = []
 
@@ -165,9 +227,18 @@ def Master_1DVar_run(inputDict):
     i = 0
     print(dateStringList)
     for time in dateStringList:
+        # initialize observation anew from example input each simulation timestep
         obs = input['obs']
-        obs['tauw'] = tauw[0]
-        print(obs['tauw'])
+
+        # write wind observations to observations matfile
+        if i == 0:
+            obs['tauw'] = tauw[0]
+        else:
+            try:
+                obs['tauw'] = tauw[int((i + 1) * wind_indice_skip)]
+            except:
+                obs['tauw'] = tauw[-1]
+
         try:
             print('-------------------------------Beginning Simulation {}-------------------------------'.format(
                 DT.datetime.now()))
@@ -178,13 +249,18 @@ def Master_1DVar_run(inputDict):
                 print('Running {} Simulation'.format(model.upper()))
                 dt = DT.datetime.now()
 
-                prior['theta0'] = np.deg2rad(spec8m['waveDp'][i]-71.8)  # populate with theta0 data
-                prior['H0'] = spec8m['Hs'][i]  # populate with offshore wave height data
-                prior['sigma'] = 2 * np.pi * spec8m['peakf'][i]  # calculate offshore sigma value"""
+                print("Wind Speed at timestep (m/s): ", obs['tauw'])
+
+                # population the new "prior" during each timestep with FRF data
+                prior['theta0'] = np.deg2rad(spec8m['waveDp'][i]-71.8)  # populate with theta0 data from 8m array
+                prior['H0'] = spec8m['Hs'][i]  # populate with offshore wave height data from 8m array
+                prior['sigma'] = 2 * np.pi * spec8m['peakf'][i]  # calculate offshore sigma value from 8m array
                 print("theta: ", prior['theta0'])
+
                 # select indices of bathymetry where we have Hs measurements
                 obs['H']['d'] = []
                 obs['H']['ind'] = []
+
                 if spec100m != None:
                     try:
                         obs = assim_waves(X, spec100m, obs, i)
@@ -211,19 +287,24 @@ def Master_1DVar_run(inputDict):
                     except:
                         pass
 
-                for obs_timestep_ind in obs['H']['ind']:
-                    obs_indices_h.append(obs_timestep_ind)
+                # set wave observation errors, just using example errors for now
                 try:
                     obs['H']['e'] = matlab.float64(obs['H']['e'][0][:len(obs['H']['d'])])
                 except:
                     obs['H']['e'] = matlab.float64(obs['H']['e'][:len(obs['H']['d'])])
+
                 print("Wave Heights to Assimilate: ", obs['H']['d'])
                 print("Wave Indices to Assimilate: ", obs['H']['ind'])
                 print("Wave Errors to Assimilate: ", obs['H']['e'])
 
+                # add indices with assimilated wave heights to list for plotting
+                for obs_timestep_ind in obs['H']['ind']:
+                    obs_indices_h.append(obs_timestep_ind)
+
                 # select indices of bathymetry where we have v measurements
                 obs['v']['d'] = []
                 obs['v']['ind'] = []
+
                 if adop_35m_currents != None:
                     try:
                         obs = assim_currents(X, adop_35m_currents, obs, i)
@@ -243,12 +324,15 @@ def Master_1DVar_run(inputDict):
                     try:
                         obs = assim_currents(X, awac_8m_currents, obs, i)
                     except:
-                        pass"""
-                #if awac_11m_currents != None:
-                    #obs = assim_currents(X, awac_11m_currents, obs, i)
+                        pass
+                if awac_11m_currents != None:
+                    try:
+                        obs = assim_currents(X, awac_11m_currents, obs, i)
+                    except:
+                        pass
+                """
 
-                for obs_timestep_ind in obs['v']['ind']:
-                    obs_indices_v.append(obs_timestep_ind)
+                # set current observation errors, just using .1 m/s for now
                 try:
                     obs['v']['e'] = matlab.float64(obs['v']['e'][0][:len(obs['v']['d'])])
                 except:
@@ -258,17 +342,26 @@ def Master_1DVar_run(inputDict):
                 print("Current Indices to Assimilate: ", obs['v']['ind'])
                 print("Current Errors to Assimilate: ", obs['v']['e'])
 
-                obs['tauw'] = tauw[int((i+1)*wind_indice_skip)]
+                # add indices with assimilated currents to list for plotting
+                for obs_timestep_ind in obs['v']['ind']:
+                    obs_indices_v.append(obs_timestep_ind)
 
+                # run 1DVar model with prior and observation input
+                # set nout if desired to obtain diagnostics and representer matrices
                 posterior, diagnostics = octave.feval('C:/cmtb/bin/1DVar/assim_1dh.m', prior, obs, 1, nout=2)#, representers = \
                 print('Simulation took %s ' % (DT.datetime.now() - dt))
 
+            # make the output of the model the prior for the next timestep
             prior = posterior
+
+            # find delta_t for the next timestep
             try:
                 delta_t = spec8m['time'][i+1] - spec8m['time'][i]
                 delta_t = delta_t.seconds
             except:
                 pass
+
+            #calculate Ch for the next timestep
             prior, Q = calculate_Ch(prior, spec8m, X, delta_t, Q)
 
             i += 1
@@ -278,6 +371,10 @@ def Master_1DVar_run(inputDict):
             print('<< ERROR >> HAPPENED IN THIS TIME STEP\n{}'.format(e))
             logging.exception('\nERROR FOUND @ {}\n'.format(time), exc_info=True)
             os.chdir(modeldir)
+
+    # plot prior, posterior, difference, and Q
+    # plot hErr on the prior and posterior
+    # show areas with assimilated data on all plots
 
     obs_indices_h = np.unique(obs_indices_h)
     obs_indices_v = np.unique(obs_indices_v)
