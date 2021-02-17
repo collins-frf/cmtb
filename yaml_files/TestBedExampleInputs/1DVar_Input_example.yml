@@ -9,10 +9,11 @@ bathyLoc: integrated_bathy                  # bathymetry source.  OPTIONAL: defa
 ########################
 #simulations parameters#
 ########################
-startTime: '2016-07-28T00:00:00Z'           # project start time
-endTime:   '2016-08-14T00:00:00Z'           # project End time not inclusive
+startTime: '2016-11-05T00:00:00Z'           # project start time
+endTime:   '2016-11-08T00:00:00Z'           # project End time not inclusive
+
 simulationDuration: 3                 # duration in hours how frequently to get new data, size of individual simulations
-modelExecutable: C:/cmtb/bin/1DVar   # path to the model    REQUIRED# this is the directory where simulation files and QA/QC plots are made and existing architecture takes over
+modelExecutable: D:/cmtb/bin/1DVar   # path to the model    REQUIRED# this is the directory where simulation files and QA/QC plots are made and existing architecture takes over
 ########################
 # path stuff           #
 ########################
@@ -22,6 +23,6 @@ modelSettings:
   grid: None
 
 # this is the sim files, and plots
-workingDirectory: C:/cmtb/data/waveModels/1DVar                                  # REQUIRED usually [cmtbRoot]/data/waveModels
+workingDirectory: D:/cmtb/data/waveModels/1DVar                                  # REQUIRED usually [cmtbRoot]/data/waveModels
 # this is the base directory where netCDF files are output to,
-netCDFdir: C:/cmtb/netCDF                        #optional will default to home/[whoami]/thredds_data -- this needs /
+netCDFdir: D:/cmtb/netCDF                        #optional will default to home/[whoami]/thredds_data -- this needs /

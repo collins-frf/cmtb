@@ -29,7 +29,7 @@ function [posterior,diagnostics,representers]=assim_1dh(prior,obs,verb,bkgd)
 % diagnostics = struct with diagnostic fields for analyzing the update.  See
 % comments near end of this code for descriptions
 %
-addpath 'C:/cmtb/bin/1DVar/waveModel'
+addpath 'D:/cmtb/bin/1DVar/waveModel'
 warning('off','all');
 if(~exist('verb'))
   verb=1;
