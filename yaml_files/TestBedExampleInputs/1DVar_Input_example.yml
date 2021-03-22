@@ -24,5 +24,6 @@ modelSettings:
 
 # this is the sim files, and plots
 workingDirectory: D:/cmtb/data/waveModels/1DVar                                  # REQUIRED usually [cmtbRoot]/data/waveModels
+mainDirectory: D:/cmtb/  # Set to main filepath
 # this is the base directory where netCDF files are output to,
-netCDFdir: D:/cmtb/netCDF                        #optional will default to home/[whoami]/thredds_data -- this needs /
+netCDFdir: ./netCDF                        #optional will default to home/[whoami]/thredds_data -- this needs /

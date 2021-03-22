@@ -14,6 +14,7 @@ from oct2py import octave
 import matlab
 import math
 import netCDF4 as nc
+from scipy.io import loadmat, savemat
 
 Q = 0
 
@@ -269,7 +270,6 @@ def plot_1DVar(X, h, Q, posterior, obs_indices_h, obs_indices_v, projectEnd, zer
     ax2.scatter(X, -(h+posterior['h']), color="black")
     ax2.set_xlabel("Crosshore distance (m)")
     ax2.set_ylabel("Elevation change (m)")
-    ax2.set_xlim(xmax=1000)
 
     for obs_loc in obs_indices_h:
         ax2.axvline(x=obs_loc*(X[-1]/len(h)), color='r', linestyle='--')
@@ -335,6 +335,7 @@ def Master_1DVar_run(inputDict):
     pFlag = inputDict['pFlag']
     model = inputDict.get('model', '1DVar')
     modeldir = inputDict['modelExecutable']
+    matlabfiledir = inputDict['mainDirectory']
     log = inputDict.get('logging', True)
 
     # __________________pre-processing checks________________________________
@@ -400,15 +401,21 @@ def Master_1DVar_run(inputDict):
         X, h, Q, tauw, wind_indice_skip, delta_t, prior, obs_list, obs_indices_h, obs_indices_v, zero_elev = \
             preprocess_data(waves_obj, current_obj, pier_wind, bathyTransect, dateStringList, simulationDuration)
 
+        obs_dict = {}
+        obs_dict["struct"] = obs_list
+
+        savemat("./data/matlab_files/initialprior.mat", prior)
+        savemat("./data/matlab_files/obslist.mat", obs_dict)
+
+
     # ________________________________________________ RUN LOOP ________________________________________________
     for element, time in enumerate(dateStringList):
         try:
             print('-------------------------------Beginning Simulation {}-------------------------------'.format(
                 DT.datetime.now()))
-
+            
             if runFlag == True:  # run model
                 os.chdir(modeldir)  # changing locations to where the model will be ran from for octave
-                print(os.getcwd())
                 print('Running {} Simulation'.format(model.upper()))
                 dt = DT.datetime.now()
 
@@ -427,11 +434,17 @@ def Master_1DVar_run(inputDict):
                 print("Current indices: ", obs['v']['ind'])
                 print("Tauw to assimilate: ", obs['tauw'])
 
+
                 # run 1DVar model with prior and observation input
                 # set nout if desired to obtain diagnostics and representer matrices
                 posterior, diagnostics = octave.feval(modeldir + '/assim_1dh.m', prior, obs, 1, nout=2)#, representers = \
                 print('Simulation took %s ' % (DT.datetime.now() - dt))
-
+                os.chdir(matlabfiledir)
+                # save matfile of this particular prior and obs
+                savemat("./data/matlab_files/prior_" + str(time[:13]) + ".mat", prior)
+                savemat("./data/matlab_files/obs_" + str(time[:13]) + ".mat", obs)
+            os.chdir(matlabfiledir)
+            savemat("./data/matlab_files/posterior_" + str(time[:13]) + ".mat", posterior)
             # make the output of the model the prior for the next timestep
             prior = posterior
 
