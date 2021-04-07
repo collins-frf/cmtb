@@ -7,7 +7,7 @@ function [ad_h,ad_H0,ad_theta0,ad_ka_drag]=ad_waveModel(x,ad_H,ad_theta,ad_v,ad_
 % from output of tl_waveModel.m.
 %
 
-[g,alpha,beta,nu]=waveModelParams();
+[g,alpha,beta,nu,gammaType]=waveModelParams();
 
 % grid
 nx=length(x);
@@ -60,7 +60,8 @@ ad_n=zz;
 ad_Qb=zz;
 ad_Hm=zz;
 ad_refconst=0;
-ad_gamma=0;
+ad_gamma=zz;
+ad_tharg=0;
 
 % bottom stress model following Ruessink et al. (2001), Feddersen et
 % al. (2000)
@@ -287,18 +288,17 @@ for i=1:(nx-1)
   ad_B=0;
 
   % max wave height
-  % Hm=0.88./k.*tanh(gamma/0.88.*k.*h);
-  tharg=gamma/0.88.*k(i+1).*h(i+1);
-  % tl_Hm(i+1)=0.88*( -1./k(i+1).^2.*tanh(tharg).*tl_k(i+1) ...
+  tharg=gamma(i+1)/0.88.*k(i+1).*h(i+1);
+  %2 tl_Hm(i+1)=0.88*( -1./k(i+1).^2.*tanh(tharg).*tl_k(i+1) ...
   %              + 1./k(i+1).*sech(tharg).^2.*tl_tharg );
-  ad_k(i+1)=ad_k(i+1)-0.88*ad_Hm(i+1)./k(i+1).^2.*tanh(tharg);
-  ad_tharg=ad_Hm(i+1)*0.88./k(i+1).*sech(tharg).^2;  % assume init = 0
+  ad_k(i+1)=ad_k(i+1)- 0.88./k(i+1).^2.*tanh(tharg).*ad_Hm(i+1);
+  ad_tharg =ad_tharg + 0.88./k(i+1).*sech(tharg).^2.*ad_Hm(i+1);
   ad_Hm(i+1)=0;
-  % tl_tharg=gamma/0.88*( tl_k(i+1).*h(i+1) + k(i+1)*tl_h(i+1) ) ...
-  %          + tl_gamma/0.88.*k(i+1).*h(i+1);
-  ad_k(i+1)=ad_k(i+1)+tharg./k(i+1)*ad_tharg;
-  ad_h(i+1)=ad_h(i+1)+tharg./h(i+1)*ad_tharg;
-  ad_gamma=ad_gamma+1/0.88.*k(i+1).*h(i+1)*ad_tharg;
+  %1 tl_tharg=gamma(i+1)/0.88*( tl_k(i+1).*h(i+1) + k(i+1)*tl_h(i+1) ) ...
+  %          + tl_gamma(i+1)/0.88.*k(i+1).*h(i+1);
+  ad_k(i+1)=ad_k(i+1)+ gamma(i+1)/0.88*h(i+1)     *ad_tharg;
+  ad_h(i+1)=ad_h(i+1)+ gamma(i+1)/0.88*k(i+1)     *ad_tharg;
+  ad_gamma(i+1) =ad_gamma(i+1) + 1/0.88.*k(i+1).*h(i+1)*ad_tharg;
   ad_tharg=0;
 
   % refraction
@@ -319,17 +319,29 @@ ad_H0=ad_H(nx);
 ad_H0=ad_H0+g/8*2*H0*ad_E(nx);
 % tl_Er(nx)=0;
 
-% gamma calculated based on deep water wave steepness (s0) following Battjes
-% and Stive (1985), and also used at FRF by Ruessink et al. (2001)
-L0=g/(2*pi*(sigma/2/pi)^2);
-s0=H0/L0;
-gamma=0.5+0.4*tanh(33*s0);
-%2 tl_gamma=0.4*sech(33*s0).^2.*33*tl_s0;
-ad_s0=0.4*sech(33*s0).^2.*33*ad_gamma;
-ad_gamma=0;
-%1 tl_s0=tl_H0/L0;
-ad_H0=ad_H0+ad_s0/L0;
-ad_s0=0;
+% gamma can be either calculated based on deep water wave steepness (s0)
+% following Battjes and Stive (1985) (also used by Ruessink et al., 2001),
+% or based on the empirical fit obtained for duck94 by Ruessink et
+% al. (2003).
+if(gammaType==2001)
+  L0=g/(2*pi*(omega/2/pi)^2);
+  s0=H0/L0;
+  %2 tl_gamma=0.4*sech(33*s0).^2.*33*tl_s0;
+  ad_s0=ad_s0+0.4*sech(33*s0).^2.*33*sum(ad_gamma);
+  ad_gamma=0;
+  %1 tl_s0=tl_H0/L0-H0/L0^2*tl_L0;
+  ad_H0=ad_H0+ad_s0/L0;
+  ad_L0=ad_L0-H0/L0^2*ad_s0;
+  ad_s0=0;
+  %0 tl_L0 = -2*2*pi*g/omega^3*tl_omega;
+  ad_omega = ad_omega-2*2*pi*g/omega^3*ad_L0;
+  ad_L0=0;
+elseif(gammaType==2003)
+  % tl_gamma = 0.76*tl_k.*h + 0.76*k.*tl_h;
+  ad_k = ad_k + 0.76*h.*ad_gamma;
+  ad_h = ad_h + 0.76*k.*ad_gamma;
+  ad_gamma=0;
+end
 
 % dispersion
 

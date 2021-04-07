@@ -29,7 +29,7 @@ function [posterior,diagnostics,representers]=assim_1dh(prior,obs,verb,bkgd)
 % diagnostics = struct with diagnostic fields for analyzing the update.  See
 % comments near end of this code for descriptions
 %
-addpath 'D:/cmtb/bin/1DVar/waveModel'
+addpath '/home/wilsongr/work/funded_projects/USCRP_DA/project/cmtb/bin/1DVar/waveModel/';
 warning('off','all');
 if(~exist('verb'))
   verb=1;
@@ -56,6 +56,41 @@ for i=1:length(fld)
   if(~isfield(obs,fld(i)))
     obs=setfield(obs,fld(i),noobs);
   end
+end
+
+% Adjust prior tauw to account for possible pressure gradients.  The eqn for
+% v is copied from waveModel.m and directly inverted to solve for the force
+% Fy, using alongshore current observations on the shelf (x>800m).  This Fy
+% is then assigned to tauw=Fy, replacing the input wind stress.  It should
+% be noted this total force Fy includes other contributions other than wind
+% stress (dp/dy); so assigning it to tauw is an abuse of notation, but
+% avoids the need for other coding changes such as adding a separate dp/dy
+% term to waveModel.m.
+imin=min(find(x>800));
+ind=find(obs.v.ind>imin);
+if(isempty(ind))
+  prior.tauw = obs.tauw;  % default: if vshelf observations are unavailable, just use wind stress
+else
+  vshelf = obs.v.d(ind);
+  h = interp1(x,prior.h,x(obs.v.ind(ind)));
+  g=9.8126;
+  for i=1:length(ind)
+    k(i)=fzero(@(k)prior.sigma^2-g*k.*tanh(k.*h(i)),prior.sigma./sqrt(g*h(i)),optimset('Display','off'));
+  end
+  a=1.16;  % empirical constant
+  Cd=0.015*(prior.ka_drag./h).^(1/3);
+  urms=1.416*prior.H0.*prior.sigma./(4*sinh(k.*h));
+  % v2 = sqrt( (a*Cd.*urms).^4 + 4*(Cd.*Fy).^2 )./(2*Cd.^2) - (a*urms).^2/2;  % from waveModel.m
+  Fy = sqrt( ( ( ( vshelf.^2 + (a*urms).^2/2 ).*(2*Cd.^2) ).^2 - (a*Cd.*urms).^4 )./(4*Cd.^2) );
+  Fy = -abs(Fy).*sign(mean(vshelf));
+  prior.tauw = mean(Fy);  % override user-input tauw with inverted version
+  clear h k a Cd urms
+  % ind=setdiff(1:length(obs.v.ind),ind);  % optional: toss out obs used for calculating Fy above
+  % for fld={'ind','d','e'}
+  %   fld=cell2mat(fld);
+  %   this=getfield(obs.v,fld);
+  %   obs.v=setfield(obs.v,fld,this(ind));
+  % end
 end
 
 % initialize prior model state using NL model
@@ -214,7 +249,7 @@ for n=1:nitermax
   if(verb)
     %disp('plot')
     clf
-    subplot(221)%, hold on
+    subplot(221), hold on
     plot(prior.x,prior.h,'r')
     plot(prior.x,prior.h-sqrt(diag(prior.Ch)),'r--')
     plot(prior.x,prior.h+sqrt(diag(prior.Ch)),'r--')
@@ -224,18 +259,18 @@ for n=1:nitermax
     set(gca,'ydir','reverse')
     ylabel('h [m]')
     % legend('prior','inverted')
-    subplot(222)%, hold on
+    subplot(222), hold on
     plot(prior.x,prior.H,'r')
     plot(posterior.x,posterior.H,'b')
     errorbar(x(obs.H.ind),obs.H.d,obs.H.e,'ko')
     ylabel('H_{rms} [m]')
     title(['H0 prior=' num2str(prior.H0,2) 'm, final=' num2str(posterior.H0,2) 'm']);
-    subplot(223)%, hold on
+    subplot(223), hold on
     plot(prior.x,rad2deg(prior.theta),'r')
     plot(posterior.x,rad2deg(posterior.theta),'b')
     ylabel('theta [deg]')
     title(['theta0 prior=' num2str(rad2deg(prior.theta0),2) 'deg, final=' num2str(rad2deg(posterior.theta0),2) 'deg']);
-    subplot(224)%, hold on
+    subplot(224), hold on
     plot(prior.x,prior.v,'r')
     plot(posterior.x,posterior.v,'b')
     errorbar(x(obs.v.ind),obs.v.d,obs.v.e,'ko')

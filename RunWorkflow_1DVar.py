@@ -80,8 +80,8 @@ def calculate_Ch(prior, spec8m, X, delta_t, Q):
         Q: defined above
 
     Returns:
-        prior: with newly written Ch
-        Q: old Q + new Q
+        prior: with newly written Ch = (old Ch) + Q
+        Q: process error
     """
 
     Cq = 0.067  # from sandy duck experiment
@@ -92,18 +92,18 @@ def calculate_Ch(prior, spec8m, X, delta_t, Q):
     print("Delta t in hours:", delta_t*24)
     xx = np.meshgrid(X)
     Lx = 25  # decorrelation length scale, larger Lx leads to smoother results
-    N = np.exp((-(xx - np.transpose(xx)) ** 2) / (2 * Lx))
-    Q = Q + (Cq * Hmo) ** (np.power(-((X - x0) / sigma_x), 2))*delta_t
+    N = np.exp((-(xx - np.transpose(xx)) ** 2) / (2 * Lx**2))
+    Q = (Cq * Hmo) ** (np.power(-((X - x0) / sigma_x), 2))*delta_t
     S = np.diag(np.sqrt(Q))
     Ch = S * N * S
-
-    prior['Ch'] = Ch  # populate elevation covariance
+    if prior['Ch'] == []:
+        prior['Ch'] = np.zeros(shape=Ch.shape)
+    prior['Ch'] += Ch  # add process error to prior Ch
     return prior, Q
-
 
 def set_offshore_conditions(prior, waves_obj, element):
     # population the new "prior" during each timestep with FRF data
-    prior['theta0'] = np.deg2rad(waves_obj[-1]['waveDp'][element] - 71.8)  # populate with theta0 data from 8m array
+    prior['theta0'] = np.deg2rad(waves_obj[-1]['waveDm'][element] - 71.8)  # populate with theta0 data from 8m array
     print("Offshore Wave Direction: ", prior['theta0'])
     prior['H0'] = waves_obj[-1]['Hs'][element]  # populate with offshore wave height data from 8m array
     prior['sigma'] = 2 * np.pi * waves_obj[-1]['peakf'][element]  # calculate offshore sigma value from 8m array
@@ -117,7 +117,7 @@ def create_prior():
     prior['theta0'] = []
     prior['H0'] = []
     prior['ka_drag'] = .015
-    prior['hErr'] = .1
+    prior['hErr'] = []
     prior['Ctheta0'] = .0305
     prior['CH0'] = .01
     prior['Cka'] = 2.5*10**-5
@@ -436,14 +436,15 @@ def Master_1DVar_run(inputDict):
 
 
                 # run 1DVar model with prior and observation input
-                # set nout if desired to obtain diagnostics and representer matrices
-                posterior, diagnostics = octave.feval(modeldir + '/assim_1dh.m', prior, obs, 1, nout=2)#, representers = \
-                print('Simulation took %s ' % (DT.datetime.now() - dt))
-                os.chdir(matlabfiledir)
+                # set nout if desired to obtain diagnostics and representer matrices.
                 # save matfile of this particular prior and obs
+                os.chdir(matlabfiledir)
                 savemat("./data/matlab_files/prior_" + str(time[:13]) + ".mat", prior)
                 savemat("./data/matlab_files/obs_" + str(time[:13]) + ".mat", obs)
+                posterior, diagnostics = octave.feval(modeldir + '/assim_1dh.m', prior, obs, 1, nout=2)#, representers = \
+                print('Simulation took %s ' % (DT.datetime.now() - dt))
             os.chdir(matlabfiledir)
+            # save matfile of the posterior result
             savemat("./data/matlab_files/posterior_" + str(time[:13]) + ".mat", posterior)
             # make the output of the model the prior for the next timestep
             prior = posterior
