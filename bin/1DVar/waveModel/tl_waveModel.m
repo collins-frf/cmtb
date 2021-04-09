@@ -6,7 +6,7 @@ function [tl_H,tl_theta,tl_v,tl_k]=tl_waveModel(x,tl_h,tl_H0,tl_theta0,tl_ka_dra
 % directly from output of waveModel.m
 %
 
-[g,alpha,beta,nu]=waveModelParams();
+[g,alpha,beta,nu,gammaType]=waveModelParams();
 
 % grid
 nx=length(x);
@@ -51,13 +51,23 @@ tl_cg=tl_n.*c+n.*tl_c;
 refconst=sin(theta0)/c(nx);
 tl_refconst=cos(theta0)/c(nx)*tl_theta0-sin(theta0)/c(nx)^2*tl_c(nx);
 
-% gamma calculated based on deep water wave steepness (s0) following Battjes
-% and Stive (1985), and also used at FRF by Ruessink et al. (2001)
-L0=g/(2*pi*(sigma/2/pi)^2);
-s0=H0/L0;
-tl_s0=tl_H0/L0;
-gamma=0.5+0.4*tanh(33*s0);
-tl_gamma=0.4*sech(33*s0).^2.*33*tl_s0;
+% gamma can be either calculated based on deep water wave steepness (s0)
+% following Battjes and Stive (1985) (also used by Ruessink et al., 2001),
+% or based on the empirical fit obtained for duck94 by Ruessink et
+% al. (2003).
+if(gammaType==2001)
+  L0=g/(2*pi*(omega/2/pi)^2);  % = 2*pi*g/omega^2
+  tl_L0 = -2*2*pi*g/omega^3*tl_omega;
+  s0=H0/L0;
+  tl_s0=tl_H0/L0-H0/L0^2*tl_L0;
+  gamma=0.5+0.4*tanh(33*s0);
+  tl_gamma=0.4*sech(33*s0).^2.*33*tl_s0;
+  gamma=ones(nx,1)*gamma;
+  tl_gamma=ones(nx,1)*gamma;
+elseif(gammaType==2003)
+  gamma=0.76*k.*h+0.29;
+  tl_gamma = 0.76*tl_k.*h + 0.76*k.*tl_h;
+end
 
 % stepping, explicit scheme
 tl_E=zeros(nx,1);
@@ -75,9 +85,9 @@ for i=(nx-1):-1:1
   tl_theta(i)=1./sqrt(1-(c(i).*refconst).^2).*( refconst.*tl_c(i) + tl_refconst.*c(i) );
 
   % max wave height
-  tharg=gamma/0.88.*k(i+1).*h(i+1);
-  tl_tharg=gamma/0.88*( tl_k(i+1).*h(i+1) + k(i+1)*tl_h(i+1) ) ...
-           + tl_gamma/0.88.*k(i+1).*h(i+1);
+  tharg=gamma(i+1)/0.88.*k(i+1).*h(i+1);
+  tl_tharg=gamma(i+1)/0.88*( tl_k(i+1).*h(i+1) + k(i+1)*tl_h(i+1) ) ...
+           + tl_gamma(i+1)/0.88.*k(i+1).*h(i+1);
   % Hm(i+1)=0.88./k(i+1).*tanh(tharg);
   tl_Hm(i+1)=0.88*( -1./k(i+1).^2.*tanh(tharg).*tl_k(i+1) ...
                + 1./k(i+1).*sech(tharg).^2.*tl_tharg );

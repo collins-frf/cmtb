@@ -29,7 +29,7 @@ else
   tauw=0;
 end
 
-[g,alpha,beta,nu]=waveModelParams();
+[g,alpha,beta,nu,gammaType]=waveModelParams();
 
 % grid
 nx=length(x);
@@ -46,11 +46,18 @@ n=.5*(1+2*k.*h./sinh(2*k.*h));
 cg=n.*c;
 refconst=sin(theta0)/c(nx);
 
-% gamma calculated based on deep water wave steepness (s0) following Battjes
-% and Stive (1985), and also used by Ruessink et al. (2001)
-L0=g/(2*pi*(sigma/2/pi)^2);
-s0=H0/L0;
-gamma=0.5+0.4*tanh(33*s0);
+% gamma can be either calculated based on deep water wave steepness (s0)
+% following Battjes and Stive (1985) (also used by Ruessink et al., 2001),
+% or based on the empirical fit obtained for duck94 by Ruessink et
+% al. (2003).
+if(gammaType==2001)
+  L0=g/(2*pi*(omega/2/pi)^2);
+  s0=H0/L0;
+  gamma=0.5+0.4*tanh(33*s0);
+  gamma=ones(nx,1)*gamma;
+elseif(gammaType==2003)
+  gamma=0.76*k.*h+0.29;
+end
 
 % refraction
 theta=asin(c.*refconst);
@@ -67,7 +74,7 @@ theta(nx)=theta0; %asin(c(nx).*refconst);
 for i=(nx-1):-1:1
 
   % max wave height
-  tharg=gamma/0.88.*k(i+1).*h(i+1);
+  tharg=gamma(i+1)/0.88.*k(i+1).*h(i+1);
   Hm(i+1)=0.88./k(i+1).*tanh(tharg);
 
   % fraction of breaking waves, non-implicit approximation from SWAN code
