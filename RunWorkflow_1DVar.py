@@ -101,6 +101,7 @@ def calculate_Ch(prior, spec8m, X, delta_t, Q):
     prior['Ch'] += Ch  # add process error to prior Ch
     return prior, Q
 
+
 def set_offshore_conditions(prior, waves_obj, element):
     # population the new "prior" during each timestep with FRF data
     prior['theta0'] = np.deg2rad(waves_obj[-1]['waveDm'][element] - 71.8)  # populate with theta0 data from 8m array
@@ -407,7 +408,6 @@ def Master_1DVar_run(inputDict):
         savemat("./data/matlab_files/initialprior.mat", prior)
         savemat("./data/matlab_files/obslist.mat", obs_dict)
 
-
     # ________________________________________________ RUN LOOP ________________________________________________
     for element, time in enumerate(dateStringList):
         try:
@@ -432,6 +432,12 @@ def Master_1DVar_run(inputDict):
                 print("Wave height indices: ", obs['H']['ind'])
                 print("Currents (m/s) to assimilate: ", obs['v']['d'])
                 print("Current indices: ", obs['v']['ind'])
+                if int(obs['v']['ind'][-1]) != 242:
+                    print("No offshore forcing present in current measurements for this timestep -- skipping assimilation")
+                    delta_t = waves_obj[-1]['time'][int(element + 2*simulationDuration)] - waves_obj[-1]['time'][element]
+                    delta_t = np.abs(delta_t.seconds)
+                    prior, Q = calculate_Ch(prior, waves_obj[-1], X, delta_t, Q)
+                    continue
                 print("Tauw to assimilate: ", obs['tauw'])
 
 
