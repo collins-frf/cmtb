@@ -1,9 +1,4 @@
 # -*- coding: utf-8 -*-
-# import matplotlib
-# matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-from mpl_toolkits.mplot3d import Axes3D
 import os, getopt, sys, shutil, glob, logging, yaml, re, pickle
 import datetime as DT
 from subprocess import check_output
@@ -11,11 +6,9 @@ import numpy as np
 from getdatatestbed.getDataFRF import getObs, getDataTestBed
 from testbedutils import fileHandling
 from oct2py import octave
-import matlab
-import math
-import netCDF4 as nc
-from scipy.io import loadmat, savemat
-
+from scipy.io import savemat
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 Q = 0
 
 
@@ -35,8 +28,8 @@ def assim_currents(X, currents_object, obs, i):
 
     """
     awac_value, awac_indice = find_nearest(X, currents_object['xFRF'])
-    obs['v']['d'] = np.append(obs['v']['d'], (matlab.float64([currents_object['aveV'][i]])), axis=0)
-    obs['v']['ind'] = np.append(obs['v']['ind'], (matlab.float64([awac_indice])), axis=0)
+    obs['v']['d'] = np.append(obs['v']['d'], float(currents_object['aveV'][i]))
+    obs['v']['ind'] = np.append(obs['v']['ind'], int(awac_indice))
     obs['v']['e'] = np.append(obs['v']['e'], .1)
     return obs
 
@@ -59,8 +52,8 @@ def assim_waves(X, waves_object, obs, i):
 
     """
     hs_value, hs_indice = find_nearest(X, waves_object['xFRF'])
-    obs['H']['d'] = np.append(obs['H']['d'], (matlab.float64([waves_object['Hs'][i]])), axis=0)
-    obs['H']['ind'] = np.append(obs['H']['ind'], (matlab.float64([hs_indice])), axis=0)
+    obs['H']['d'] = np.append(obs['H']['d'], float(waves_object['Hs'][i]))
+    obs['H']['ind'] = np.append(obs['H']['ind'], int(hs_indice))
     obs['H']['e'] = np.append(obs['H']['e'], .2)
     return obs
 
@@ -138,12 +131,12 @@ def create_obs():
     obs['v']['ind'] = []
     obs['v']['e'] = []
     obs['tauw'] = []
+    obs['tide'] = []
     return obs
 
 
-def preprocess_data(waves_obj, current_obj, pier_wind, bathyTransect, dateStringList, simulationDuration):
+def preprocess_data(waves_obj, current_obj, tide_obj, pier_wind, bathyTransect, dateStringList, simulationDuration):
     prior = create_prior()
-    obs, obs_indices_h, obs_indices_v = create_obs()
 
     # calculate tauw
     speed = pier_wind['windspeed']
@@ -151,6 +144,7 @@ def preprocess_data(waves_obj, current_obj, pier_wind, bathyTransect, dateString
     cd = 0.002  # reniers et al. 2004
     tauw = cd * (speed ** 2) * np.cos(direc)
     wind_indice_skip = len(tauw) / len(dateStringList)
+    tide_indice_skip = len(tide_obj) / len(dateStringList)
 
     # restrict bathy to only include points after indice 35,
     zero_elev = np.argmax(bathyTransect['elevation'][200, :] < 0)
@@ -182,12 +176,15 @@ def preprocess_data(waves_obj, current_obj, pier_wind, bathyTransect, dateString
     for element, time in enumerate(dateStringList):
         obs = create_obs()
         obs['tauw'] = tauw[0]
-        # populate each obs with tauw data
+        obs['tide'] = tide_obj[0]
+        # populate each obs with tauw and tide data
         if element > 0:
             try:
                 obs['tauw'] = tauw[int(element * wind_indice_skip)]
+                obs['tide'] = tide_obj[int(element * tide_indice_skip)]
             except:
                 obs['tauw'] = tauw[-1]
+                obs['tide'] = tide_obj[-1]
 
         for i in range(len(waves_obj)):
             try:
@@ -217,7 +214,7 @@ def preprocess_data(waves_obj, current_obj, pier_wind, bathyTransect, dateString
 
         obs_list = np.append(obs_list, obs)
 
-    return X, h, Q, tauw, wind_indice_skip, delta_t, prior, obs_list, obs_indices_h, obs_indices_v, zero_elev
+    return X, h, Q, tauw, wind_indice_skip, tide_indice_skip, delta_t, prior, obs_list, obs_indices_h, obs_indices_v, zero_elev
 
 
 def plot_1DVar(X, h, Q, posterior, obs_indices_h, obs_indices_v, projectEnd, zero_elev):
@@ -378,9 +375,15 @@ def Master_1DVar_run(inputDict):
 
         # initialize get observation for measurements
         go = getObs(projectStart, projectEnd)
+
+        # pull wind
         pier_wind = None
         while pier_wind == None:
             pier_wind = go.getWind()
+
+        # pull water level
+        tides_list = []
+        tides_list = np.append(tides_list, go.getWL()['WL'])
 
         # pull currents
         current_gauges = ['adop-3.5m', 'awac-4.5m', 'awac-6m', 'awac-8m', 'awac-11m']
@@ -399,12 +402,11 @@ def Master_1DVar_run(inputDict):
             waves_obj = np.append(waves_obj, go.getWaveData(gaugenumber=wave_gauges[i], spec=False))
 
         #preprocess data
-        X, h, Q, tauw, wind_indice_skip, delta_t, prior, obs_list, obs_indices_h, obs_indices_v, zero_elev = \
-            preprocess_data(waves_obj, current_obj, pier_wind, bathyTransect, dateStringList, simulationDuration)
+        X, h, Q, tauw, wind_indice_skip, tide_indice_skip, delta_t, prior, obs_list, obs_indices_h, obs_indices_v, zero_elev = \
+            preprocess_data(waves_obj, current_obj, tides_list, pier_wind, bathyTransect, dateStringList, simulationDuration)
 
         obs_dict = {}
         obs_dict["struct"] = obs_list
-
         savemat("./data/matlab_files/initialprior.mat", prior)
         savemat("./data/matlab_files/obslist.mat", obs_dict)
 
@@ -432,13 +434,17 @@ def Master_1DVar_run(inputDict):
                 print("Wave height indices: ", obs['H']['ind'])
                 print("Currents (m/s) to assimilate: ", obs['v']['d'])
                 print("Current indices: ", obs['v']['ind'])
-                if int(obs['v']['ind'][-1]) != 242:
+
+                offshore_indice = int(obs['v']['ind'][-1])
+                print(offshore_indice)
+                if offshore_indice < 242:
                     print("No offshore forcing present in current measurements for this timestep -- skipping assimilation")
                     delta_t = waves_obj[-1]['time'][int(element + 2*simulationDuration)] - waves_obj[-1]['time'][element]
                     delta_t = np.abs(delta_t.seconds)
                     prior, Q = calculate_Ch(prior, waves_obj[-1], X, delta_t, Q)
                     continue
                 print("Tauw to assimilate: ", obs['tauw'])
+                print("Tide: ", obs['tide'])
 
 
                 # run 1DVar model with prior and observation input
