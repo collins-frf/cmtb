@@ -7,7 +7,7 @@ function [posterior,diagnostics,representers]=assim_1dh(prior,obs,verb,bkgd)
 % INPUTS:
 %
 % prior.x = model grid
-% prior.h = bathymetry
+% prior.h = bathymetry relative to a constant vertical datum
 % prior.theta0, prior.H0 = boundary conditions
 % prior.ka_drag = bed roughness
 % prior.tauw = wind stress in m2/s2 units (default = 0 if not included)
@@ -19,8 +19,10 @@ function [posterior,diagnostics,representers]=assim_1dh(prior,obs,verb,bkgd)
 % obs.H.d = rms wave height data
 % obs.H.e = error stdev for rms wave height
 % obs.v.* = as in obs.H, but for longshore current
+% obs.tide = tidal elevation in same vertical datum as h
 %
-% NOTE, if any of obs.* are missing or empty, they will be ignored
+% NOTE, if any of obs.* are missing or empty, they will be ignored.  The
+% only required field is obs.tide.
 %
 % OUTPUTS:
 %
@@ -56,6 +58,14 @@ for i=1:length(fld)
   if(~isfield(obs,fld(i)))
     obs=setfield(obs,fld(i),noobs);
   end
+end
+
+% Adjust prior to add tide.  This will be reversed at the end of this
+% script, such that during assimilation h=depth, but input/output to the
+% script is always h=navd88
+prior.h=prior.h+obs.tide;
+if(exist('bkgd'))
+  bkgd.h=bkgd.h+obs.tide;
 end
 
 % Adjust prior tauw to account for possible pressure gradients.  The eqn for
@@ -301,6 +311,10 @@ for n=1:nitermax
   end
 
 end  % outer loop iterations
+
+% Remove tide from outputs, such that h is re navd88 instead of TWL
+prior.h=prior.h-obs.tide;
+posterior.h=posterior.h-obs.tide;
 
 % OPTIONAL: for diagnostics, repeat the representer calculations for both
 % variables, but this time do ALL the gridpoints.  These can be used for
