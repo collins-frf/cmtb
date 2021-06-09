@@ -38,7 +38,7 @@ if(~exist('verb'))
 end
 
 hmin=.2;
-nitermax=500;
+nitermax=50;
 
 % unpack some variables
 Ch=prior.Ch;
@@ -50,7 +50,7 @@ nx=length(x);
 nt=length(prior);
 
 % if any obs types missing, set to empty
-fld='Hv';
+fld='Hvh';
 noobs.ind=[];
 noobs.d=[];
 noobs.e=[];
@@ -63,9 +63,16 @@ end
 % Adjust prior to add tide.  This will be reversed at the end of this
 % script, such that during assimilation h=depth, but input/output to the
 % script is always h=navd88
+if(obs.tide<=-999)
+  warning('got -999 (nodata) for tide, setting to zero instead')
+  obs.tide=0;
+end
 prior.h=prior.h+obs.tide;
+prior.h(prior.h<hmin)=hmin;
+obs.h.d=obs.h.d+obs.tide;
 if(exist('bkgd'))
   bkgd.h=bkgd.h+obs.tide;
+  bkgd.h(bkgd.h<hmin)=hmin;
 end
 
 % Adjust prior tauw to account for possible pressure gradients.  The eqn for
@@ -95,12 +102,12 @@ else
   Fy = -abs(Fy).*sign(mean(vshelf));
   prior.tauw = mean(Fy);  % override user-input tauw with inverted version
   clear h k a Cd urms
-  % ind=setdiff(1:length(obs.v.ind),ind);  % optional: toss out obs used for calculating Fy above
-  % for fld={'ind','d','e'}
-  %   fld=cell2mat(fld);
-  %   this=getfield(obs.v,fld);
-  %   obs.v=setfield(obs.v,fld,this(ind));
-  % end
+  ind=setdiff(1:length(obs.v.ind),ind);  % optional: toss out obs used for calculating Fy above
+  for fld={'ind','d','e'}
+    fld=cell2mat(fld);
+    this=getfield(obs.v,fld);
+    obs.v=setfield(obs.v,fld,this(ind));
+  end
 end
 
 % initialize prior model state using NL model
@@ -164,6 +171,7 @@ for n=1:nitermax
   clear R_* r_* rep_*
   r_H=zeros(nx+3,length(obs.H.ind));
   r_v=zeros(nx+3,length(obs.v.ind));
+  r_h=zeros(nx+3,length(obs.h.ind));
   ad_H_h      =zeros(length(obs.H.ind),nx);
   ad_H_H0     =zeros(length(obs.H.ind),1);
   ad_H_theta0 =zeros(length(obs.H.ind),1);
@@ -174,12 +182,22 @@ for n=1:nitermax
   ad_v_ka_drag=zeros(length(obs.v.ind),1);
   R_HH=zeros(length(obs.H.ind),length(obs.H.ind));
   R_Hv=zeros(length(obs.H.ind),length(obs.v.ind));
+  R_Hh=zeros(length(obs.H.ind),length(obs.h.ind));
   R_vH=zeros(length(obs.v.ind),length(obs.H.ind));
   R_vv=zeros(length(obs.v.ind),length(obs.v.ind));
+  R_vh=zeros(length(obs.v.ind),length(obs.h.ind));
+  R_hH=zeros(length(obs.h.ind),length(obs.H.ind));
+  R_hv=zeros(length(obs.h.ind),length(obs.v.ind));
+  R_hh=zeros(length(obs.h.ind),length(obs.h.ind));
   r_HH=zeros(length(obs.H.ind),nx);
   r_Hv=zeros(length(obs.H.ind),nx);
+  r_Hh=zeros(length(obs.H.ind),nx);
   r_vH=zeros(length(obs.v.ind),nx);
   r_vv=zeros(length(obs.v.ind),nx);
+  r_vh=zeros(length(obs.v.ind),nx);
+  r_hH=zeros(length(obs.h.ind),nx);
+  r_hv=zeros(length(obs.h.ind),nx);
+  r_hh=zeros(length(obs.h.ind),nx);
 
   % compute representers for wave height: apply delta-perturbations to
   % observations of type X, to compute (a) sensitivity of model inputs psi
@@ -195,14 +213,16 @@ for n=1:nitermax
     ad_H_theta0(i,:)=ad_theta0;
     ad_H_ka_drag(i,:)=ad_ka_drag;
     [tl_H,tl_a,tl_v,tl_k]=tl_waveModel(x,Ch*ad_h,CH0*ad_H0,Ctheta0*ad_theta0,Cka*ad_ka_drag,bkgd);
+    tl_h=Ch*ad_h;
     r_HH(i,:)=tl_H;
     r_Hv(i,:)=tl_v;
     r_Hh(i,:)=Ch*ad_h;
     R_HH(i,:)=tl_H(obs.H.ind);
     R_Hv(i,:)=tl_v(obs.v.ind);
+    R_Hh(i,:)=tl_h(obs.h.ind);
   end
 
-  % repeat to compute representers for longshore current
+  % repeat to compute representers for longshore current (v)
   for i=1:length(obs.v.ind)
     comb=zeros(nx,1);
     comb(obs.v.ind(i))=1;  % data functional (delta-fn, aka identity matrix)
@@ -213,25 +233,55 @@ for n=1:nitermax
     ad_v_theta0(i,:)=ad_theta0;
     ad_v_ka_drag(i,:)=ad_ka_drag;
     [tl_H,tl_a,tl_v,tl_k]=tl_waveModel(x,Ch*ad_h,CH0*ad_H0,Ctheta0*ad_theta0,Cka*ad_ka_drag,bkgd);
+    tl_h=Ch*ad_h;
     r_vH(i,:)=tl_H;
     r_vv(i,:)=tl_v;
     r_vh(i,:)=Ch*ad_h;
     R_vH(i,:)=tl_H(obs.H.ind);
     R_vv(i,:)=tl_v(obs.v.ind);
+    R_vh(i,:)=tl_h(obs.h.ind);
+  end
+
+  % repeat to compute representers for water depth (h)
+  for i=1:length(obs.h.ind)
+    comb=zeros(nx,1);
+    comb(obs.h.ind(i))=1;  % data functional (delta-fn, aka identity matrix)
+    ad_h=comb;
+    ad_H0=0;
+    ad_theta0=0;
+    ad_ka_drag=0;
+    r_h(:,i)=[Ch*ad_h; CH0*ad_H0; Ctheta0*ad_theta0; Cka*ad_ka_drag];  % = C*M'
+    ad_h_h(i,:)=ad_h;
+    ad_h_H0(i,:)=ad_H0;
+    ad_h_theta0(i,:)=ad_theta0;
+    ad_h_ka_drag(i,:)=ad_ka_drag;
+    [tl_H,tl_a,tl_v,tl_k]=tl_waveModel(x,Ch*ad_h,CH0*ad_H0,Ctheta0*ad_theta0,Cka*ad_ka_drag,bkgd);
+    tl_h=Ch*ad_h;
+    r_hH(i,:)=tl_H;
+    r_hv(i,:)=tl_v;
+    r_hh(i,:)=Ch*ad_h;
+    R_hH(i,:)=tl_H(obs.H.ind);
+    R_hv(i,:)=tl_v(obs.v.ind);
+    R_hh(i,:)=tl_h(obs.h.ind);
   end
 
   % assemble matrices for updating
   Cd=diag([obs.H.e(:);
-           obs.v.e(:)].^2);
-  CMt=[r_H r_v];
+           obs.v.e(:);
+           obs.h.e(:)].^2);
+  CMt=[r_H r_v r_h];
   d=[obs.H.d(:);
-     obs.v.d(:)];
+     obs.v.d(:)
+     obs.h.d(:)];
   Lu=[fcst.H(obs.H.ind);
-      fcst.v(obs.v.ind)];
-  R=[R_HH R_Hv;
-     R_vH R_vv];
+      fcst.v(obs.v.ind)
+      fcst.h(obs.h.ind)];
+  R=[R_HH R_Hv R_Hh;
+     R_vH R_vv R_vh;
+     R_hH R_hv R_hh];
   obstype=[repmat('H',[length(obs.H.d) 1]);
-           repmat('v',[length(obs.v.d) 1])];
+           repmat('v',[length(obs.v.d) 1]);
+           repmat('h',[length(obs.h.d) 1])];
 
   % compute the update
   hedge=1; %tanh(n/5);  % reduce magnitude of update for 1st few iterations
@@ -246,7 +296,7 @@ for n=1:nitermax
   posterior.ka_drag=max(1e-4,prior.ka_drag+update(nx+3));
   posterior.h = prior.h + update(1:nx);
   posterior.h(posterior.h<hmin)=hmin;
-  C2=blkdiag(Ch,CH0,Ctheta0,Cka)-CMt*inv(R+Cd)*CMt';
+  C2=blkdiag(Ch,CH0,Ctheta0,Cka)-CMt*inv(R+Cd)*CMt';  % beware, blkdiag is just an approximation...
   v2=diag(C2);
   posterior.hErr=sqrt(max(0,v2(1:nx)));
   posterior.Ch=C2(1:nx,1:nx);
@@ -254,6 +304,19 @@ for n=1:nitermax
   posterior.Ctheta0=v2(nx+2);
   posterior.Cka=v2(nx+3);
   posterior=waveModel(x,posterior.H0,posterior.theta0,posterior);
+
+  % Test code: Note that we are not updating scalar parameters (H0,theta0,Cka)
+  % between obs steps, so it makes no sense to update their uncertainty for
+  % future assimilations.  Instead, just update Ch and leave the others
+  % alone.
+  dC=CMt(1:nx,:)*inv(R+Cd)*CMt(1:nx,:)';
+  C2=Ch-dC;
+  if(min(diag(dC))<0)
+      keyboard;
+  end
+  v2=diag(C2);
+  posterior.hErr=sqrt(max(0,v2(1:nx)));
+  posterior.Ch=C2(1:nx,1:nx);
 
   % show the results
   if(verb)
@@ -291,7 +354,9 @@ for n=1:nitermax
       box on
     end
     %disp('plot2')
-    %pause(.1)
+    if(verb==2)  % gw: this is for matlab to update plot with each iteration
+      pause(.1)
+    end
   end
 
   % check for convergence
@@ -316,11 +381,72 @@ end  % outer loop iterations
 prior.h=prior.h-obs.tide;
 posterior.h=posterior.h-obs.tide;
 
-% OPTIONAL: for diagnostics, repeat the representer calculations for both
-% variables, but this time do ALL the gridpoints.  These can be used for
-% prior and posterior covariances for v, H.  This is not used for the outer
-% loop updates, so only need to do it once at the end
+%---------------------------------------
+% reformat output variables in diagnostics struct, for convenience
+%---------------------------------------
+clear diagnostics
+
+diagnostics.niter=n;
+diagnostics.eps=eps;
+
+% terms in update equation
+diagnostics.CMt=CMt;
+diagnostics.R  =R  ;
+diagnostics.Cd =Cd ;
+diagnostics.d  =d  ;
+diagnostics.Lu =Lu ;
+diagnostics.obstype=obstype;
+diagnostics.bkgd=bkgd;
+diagnostics.fcst=fcst;
+
+% representer outputs: r.X_Y refers to sensitivity of model input variable Y
+% to delta-perturbations of obs type X
+diagnostics.r.H_h     =r_H(1:nx,:);
+diagnostics.r.H_H0    =r_H(nx+1,:);
+diagnostics.r.H_theta0=r_H(nx+2,:);
+diagnostics.r.H_kadrag=r_H(nx+3,:);
+diagnostics.r.v_h     =r_v(1:nx,:);
+diagnostics.r.v_H0    =r_v(nx+1,:);
+diagnostics.r.v_theta0=r_v(nx+2,:);
+diagnostics.r.v_kadrag=r_v(nx+3,:);
+
+% R-matrix outputs: R.X_Y refers to sensitivity of obs type Y to
+% delta-perturbations of obs type X
+diagnostics.R.H_H=R_HH;
+diagnostics.R.H_v=R_Hv;
+diagnostics.R.v_H=R_vH;
+diagnostics.R.v_v=R_vv;
+
+% additional diagnostic representers: rdiag.X_Y refers to sensitivity of
+% model variable Y to delta-perturbations of obs type X
+diagnostics.rdiag.H_H=r_HH;
+diagnostics.rdiag.H_v=r_Hv;
+diagnostics.rdiag.v_H=r_vH;
+diagnostics.rdiag.v_v=r_vv;
+
+% adjoint outputs: ad.X_Y refers to sensitivity of model input Y to
+% delta-perturbations of obs type X
+diagnostics.ad.H_h      =ad_H_h;
+diagnostics.ad.H_H0     =ad_H_H0;
+diagnostics.ad.H_theta0 =ad_H_theta0;
+diagnostics.ad.H_ka_drag=ad_H_ka_drag;
+diagnostics.ad.v_h      =ad_v_h;
+diagnostics.ad.v_H0     =ad_v_H0;
+diagnostics.ad.v_theta0 =ad_v_theta0;
+diagnostics.ad.v_ka_drag=ad_v_ka_drag;
+
+%---------------------------------------
+% OPTIONAL: If diagnostics output was requested, repeat the representer
+% calculations for both variables, but this time do ALL the gridpoints.
+% These can be used for prior and posterior covariances for v, H.  This is
+% not used for the outer loop updates, so only need to do it once at the end
+%
+% NOTE: This is in the process of being split off into its own code,
+% assim_1dh_representers.m
+%---------------------------------------
+
 if(nargout>2)
+
   disp('Calculating full representer matrix as requested (nargout>2)')
 
   adj_H_h      =zeros(nx,nx);
@@ -404,58 +530,3 @@ if(nargout>2)
   representers.v_h_post=rep_vh_post;
 
 end
-
-%---------------------------------------
-% remaining code: reformat output variables in diagnostics struct, for
-% convenience
-%---------------------------------------
-clear diagnostics
-
-diagnostics.niter=n;
-diagnostics.eps=eps;
-
-% terms in update equation
-diagnostics.update.CMt=CMt;
-diagnostics.update.R  =R  ;
-diagnostics.update.Cd =Cd ;
-diagnostics.update.d  =d  ;
-diagnostics.update.Lu =Lu ;
-diagnostics.update.obstype=obstype;
-diagnostics.update.bkgd=bkgd;
-diagnostics.update.fcst=fcst;
-
-% representer outputs: r.X_Y refers to sensitivity of model input variable Y
-% to delta-perturbations of obs type X
-diagnostics.r.H_h     =r_H(1:nx,:);
-diagnostics.r.H_H0    =r_H(nx+1,:);
-diagnostics.r.H_theta0=r_H(nx+2,:);
-diagnostics.r.H_kadrag=r_H(nx+3,:);
-diagnostics.r.v_h     =r_v(1:nx,:);
-diagnostics.r.v_H0    =r_v(nx+1,:);
-diagnostics.r.v_theta0=r_v(nx+2,:);
-diagnostics.r.v_kadrag=r_v(nx+3,:);
-
-% R-matrix outputs: R.X_Y refers to sensitivity of obs type Y to
-% delta-perturbations of obs type X
-diagnostics.R.H_H=R_HH;
-diagnostics.R.H_v=R_Hv;
-diagnostics.R.v_H=R_vH;
-diagnostics.R.v_v=R_vv;
-
-% additional diagnostic representers: rdiag.X_Y refers to sensitivity of
-% model variable Y to delta-perturbations of obs type X
-diagnostics.rdiag.H_H=r_HH;
-diagnostics.rdiag.H_v=r_Hv;
-diagnostics.rdiag.v_H=r_vH;
-diagnostics.rdiag.v_v=r_vv;
-
-% adjoint outputs: ad.X_Y refers to sensitivity of model input Y to
-% delta-perturbations of obs type X
-diagnostics.ad.H_h      =ad_H_h;
-diagnostics.ad.H_H0     =ad_H_H0;
-diagnostics.ad.H_theta0 =ad_H_theta0;
-diagnostics.ad.H_ka_drag=ad_H_ka_drag;
-diagnostics.ad.v_h      =ad_v_h;
-diagnostics.ad.v_H0     =ad_v_H0;
-diagnostics.ad.v_theta0 =ad_v_theta0;
-diagnostics.ad.v_ka_drag=ad_v_ka_drag;
