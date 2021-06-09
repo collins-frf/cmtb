@@ -196,7 +196,7 @@ for i=2:nx-1
   A(i,i+[-1:1])=[1 -2 1]/dx^2*nu*h(i);
 end
 A(1,1:2)=[-2 1]/dx^2*nu*h(1);
-A(nx,nx-1:nx)=[1 -2]/dx^2*nu*h(nx);
+A(nx,nx-1:nx)=0;  % [1 -2]/dx^2*nu*h(nx);
 
 % bottom stress model following Ruessink et al. (2001), Feddersen et
 % al. (2000).  To get TL model, differentiate the eqn for v (i.e., the
