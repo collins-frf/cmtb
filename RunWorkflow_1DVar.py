@@ -30,7 +30,7 @@ def assim_currents(X, currents_object, obs, i):
     awac_value, awac_indice = find_nearest(X, currents_object['xFRF'])
     obs['v']['d'] = np.append(obs['v']['d'], float(currents_object['aveV'][i]))
     obs['v']['ind'] = np.append(obs['v']['ind'], int(awac_indice))
-    obs['v']['e'] = np.append(obs['v']['e'], .1)
+    obs['v']['e'] = np.append(obs['v']['e'], .2)
     return obs
 
 
@@ -54,13 +54,13 @@ def assim_waves(X, waves_object, obs, i):
     hs_value, hs_indice = find_nearest(X, waves_object['xFRF'])
     obs['H']['d'] = np.append(obs['H']['d'], float(waves_object['Hs'][i]))
     obs['H']['ind'] = np.append(obs['H']['ind'], int(hs_indice))
-    obs['H']['e'] = np.append(obs['H']['e'], .2)
+    obs['H']['e'] = np.append(obs['H']['e'], .05)
     return obs
 
 
 def calculate_Ch(prior, spec8m, X, delta_t, Q):
     """calculate Q(x,t) (measured process error) according to holman et al 2013
-    Q = Cq * Hmo ^ (-[(x-x0)/sigma_x]^2)
+    Q = Cq * Hmo^2 * exp(-[(x-x0)/sigma_x]^2)
     deltat is difference from survey to assimilation step;
     add q each time-step to increase uncertainty as the Ch decreases in posterior
     posterior.ch + new S *N *S with just the tiny delta_t
@@ -84,9 +84,9 @@ def calculate_Ch(prior, spec8m, X, delta_t, Q):
     delta_t = delta_t/(60*60*24)
     print("Delta t in hours:", delta_t*24)
     xx = np.meshgrid(X)
-    Lx = 25  # decorrelation length scale, larger Lx leads to smoother results
+    Lx = 50  # decorrelation length scale, larger Lx leads to smoother results
     N = np.exp((-(xx - np.transpose(xx)) ** 2) / (2 * Lx**2))
-    Q = (Cq * Hmo) ** (np.power(-((X - x0) / sigma_x), 2))*delta_t
+    Q = Cq * Hmo**2. * np.exp(np.power(-((X - x0) / sigma_x), 2))*delta_t
     S = np.diag(np.sqrt(Q))
     Ch = S * N * S
     if prior['Ch'] == []:
@@ -227,6 +227,7 @@ def plot_1DVar(X, h, Q, posterior, obs_indices_h, obs_indices_v, projectEnd, zer
     bathyTransect = bathygo.getBathyIntegratedTransect(method=1)  # grab bathymetry transects
     print("Final Bathy Survey Date: ", bathyTransect['time'])
     survey_h = bathyTransect['elevation'][200, zero_elev:]
+    savemat("./data/matlab_files/finalBathyTransect.mat", bathyTransect)
 
     obs_indices_h = np.unique(obs_indices_h)
     obs_indices_v = np.unique(obs_indices_v)
@@ -445,7 +446,6 @@ def Master_1DVar_run(inputDict):
                     continue
                 print("Tauw to assimilate: ", obs['tauw'])
                 print("Tide: ", obs['tide'])
-
 
                 # run 1DVar model with prior and observation input
                 # set nout if desired to obtain diagnostics and representer matrices.
