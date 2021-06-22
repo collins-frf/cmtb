@@ -1,6 +1,6 @@
-function [posterior,diagnostics,representers]=assim_1dh(prior,obs,verb,bkgd)
+function [posterior,forecast,diagnostics,representers]=assim_1dh(prior,obs,dt,verb)
 %
-% [posterior,diagnostics]=assim_1dh(prior,obs)
+% [posterior,forecast,diagnostics]=assim_1dh(prior,obs,dt)
 %
 % Assimilate data into 1DH wave and current model.
 %
@@ -15,6 +15,28 @@ function [posterior,diagnostics,representers]=assim_1dh(prior,obs,verb,bkgd)
 % prior.Ch, prior.Ctheta0, prior.CH0, prior.Cka = covariance matrices for h,
 % theta0, H0, ka_drag
 %
+% prior.sedmodel = string to indicate which sediment transport model is used
+%                  to forecast the bathymetry to time t+dt.  At time of
+%                  writing, the only supported model is 'persistence'.  More
+%                  models are planned for future versions.
+%
+% prior.sedparams = list of sediment transport parameters required by the
+%                   requested sedmodel.  TODO, this list needs to be
+%                   documented for each sedmodel.
+%
+%   CASE-1: sedmodel='persistence'
+%
+%     This is a persistence model for h, and covariance is updated using the
+%     "process error" defined by Holman et al. (2013) eqn. (9).  See their
+%     paper for definitions of required input fields listed below; the
+%     exception is the parameter 'Lx' which provides a finite spatial
+%     decorrelation length for the process error.
+%    
+%     prior.sedparams.Cq      (recommended 0.067 m2/day)
+%     prior.sedparams.x0      (recommended 50 m)
+%     prior.sedparams.sigma_x (recommended 150 m)
+%     prior.sedparams.Lx      (recommended 25 m)
+%
 % obs.H.ind = model indeces for rms wave height observations
 % obs.H.d = rms wave height data
 % obs.H.e = error stdev for rms wave height
@@ -24,9 +46,23 @@ function [posterior,diagnostics,representers]=assim_1dh(prior,obs,verb,bkgd)
 % NOTE, if any of obs.* are missing or empty, they will be ignored.  The
 % only required field is obs.tide.
 %
+% dt = time in days for which to provide a bathymetry forecast.  Set dt=0 to
+%      disable forecasts.
+%
 % OUTPUTS:
 %
-% posterior = struct with same fields as prior but updated by assimilation
+% posterior = struct with same fields as prior but updated by assimilation.
+%
+% forecast = struct that has similar fields as prior and posterior, but for
+%            future time t+dt.  These can be used in a subsequent
+%            assimilation cycle at time t+dt.  Importantly, h and Ch in the
+%            forecast are calculated using a sediment transport model, which
+%            can be selected using the input prior.sedmodel.
+%
+%    NOTE, setting dt=0 will disable the forecast step, in which case
+%    forecast=[].  This is recommended in cases where the forecast is not
+%    useful, since calculating the forecast can take a considerable amount
+%    of time depending on the sediment transport model being used.
 %
 % diagnostics = struct with diagnostic fields for analyzing the update.  See
 % comments near end of this code for descriptions
@@ -70,10 +106,6 @@ end
 prior.h=prior.h+obs.tide;
 prior.h(prior.h<hmin)=hmin;
 obs.h.d=obs.h.d+obs.tide;
-if(exist('bkgd'))
-  bkgd.h=bkgd.h+obs.tide;
-  bkgd.h(bkgd.h<hmin)=hmin;
-end
 
 % Adjust prior tauw to account for possible pressure gradients.  The eqn for
 % v is copied from waveModel.m and directly inverted to solve for the force
@@ -123,27 +155,30 @@ end
 eps=nan;
 for n=1:nitermax
   disp(['iteration ' num2str(n) ', itermax = ' num2str(nitermax) ', eps = ' num2str(eps)])
-  % keyboard
 
-  % define background and forecast states for this outer loop iteration
+  % define background (variable name 'bkgd') and predicted ('pred') state
+  % vectors for this outer loop iteration.  Note, earlier versions of this
+  % code used the variable name 'fcst' in place of 'pred'.  This was changed
+  % to avoid confusion with the "forecasted" bathymetry at time t+dt (which
+  % was added to the code later).
   if(n==1)
     if(~exist('bkgd'))
       bkgd=prior;
     else
       disp('using provided bkgd state')
     end
-    fcst=prior;
+    pred=prior;
   else
     bkgd=posterior;
-    fcst=prior;
-    tl_h=fcst.h-bkgd.h;
-    tl_H0=fcst.H0-bkgd.H0;
-    tl_theta0=fcst.theta0-bkgd.theta0;
-    tl_ka_drag=fcst.ka_drag-bkgd.ka_drag;
+    pred=prior;
+    tl_h=pred.h-bkgd.h;
+    tl_H0=pred.H0-bkgd.H0;
+    tl_theta0=pred.theta0-bkgd.theta0;
+    tl_ka_drag=pred.ka_drag-bkgd.ka_drag;
     [tl_H,tl_theta,tl_v]=tl_waveModel(x,tl_h,tl_H0,tl_theta0,tl_ka_drag,bkgd);
-    fcst.H=bkgd.H+tl_H;
-    fcst.theta=bkgd.theta+tl_theta;
-    fcst.v=bkgd.v+tl_v;
+    pred.H=bkgd.H+tl_H;
+    pred.theta=bkgd.theta+tl_theta;
+    pred.v=bkgd.v+tl_v;
   end
 
   % initialize representer sub-matrices
@@ -273,9 +308,9 @@ for n=1:nitermax
   d=[obs.H.d(:);
      obs.v.d(:)
      obs.h.d(:)];
-  Lu=[fcst.H(obs.H.ind);
-      fcst.v(obs.v.ind)
-      fcst.h(obs.h.ind)];
+  Lu=[pred.H(obs.H.ind);
+      pred.v(obs.v.ind)
+      pred.h(obs.h.ind)];
   R=[R_HH R_Hv R_Hh;
      R_vH R_vv R_vh;
      R_hH R_hv R_hh];
@@ -304,19 +339,6 @@ for n=1:nitermax
   posterior.Ctheta0=v2(nx+2);
   posterior.Cka=v2(nx+3);
   posterior=waveModel(x,posterior.H0,posterior.theta0,posterior);
-
-  % Test code: Note that we are not updating scalar parameters (H0,theta0,Cka)
-  % between obs steps, so it makes no sense to update their uncertainty for
-  % future assimilations.  Instead, just update Ch and leave the others
-  % alone.
-  dC=CMt(1:nx,:)*inv(R+Cd)*CMt(1:nx,:)';
-  C2=Ch-dC;
-  if(min(diag(dC))<0)
-      keyboard;
-  end
-  v2=diag(C2);
-  posterior.hErr=sqrt(max(0,v2(1:nx)));
-  posterior.Ch=C2(1:nx,1:nx);
 
   % show the results
   if(verb)
@@ -382,6 +404,55 @@ prior.h=prior.h-obs.tide;
 posterior.h=posterior.h-obs.tide;
 
 %---------------------------------------
+% Forecast step: If requested, predict the bathymetry and its covariance at
+% time t+dt.
+%---------------------------------------
+
+if(~isempty(dt) & dt>0)
+  if(~isfield(prior,'sedmodel'))
+    error('prior.sedmodel is required as input, see header of assim_1dh.m for details')
+  end
+
+  % For the forecast step, we just want to predict bathymetry.  Other
+  % non-bathymetry variables are not updated as part of the forecast step,
+  % and so they and their covariances remain constant.  Doing this
+  % bookkeeping here will make it easier to re-use the forecast as the prior
+  % for time t+dt.
+  forecast=struct;
+  forecast.x       =prior.x       ;
+  forecast.ka_drag =prior.ka_drag ;
+  forecast.sedmodel=prior.sedmodel;
+  forecast.Ctheta0 =prior.Ctheta0 ;
+  forecast.CH0     =prior.CH0     ;
+  forecast.Cka     =prior.Cka     ;
+
+  % Case-1: 'persistence'
+  if(strcmp(prior.sedmodel,'persistence'))
+    forecast.hp = posterior.h;
+    Q = ( prior.sedparams.Cq * (sqrt(2)*posterior.H0)^2 ) ...
+        * exp(-( (x-prior.sedparams.x0) / prior.sedparams.sigma_x ).^2) ...
+        * dt;
+    S = diag(sqrt(Q));
+    xx = meshgrid(x);
+    N = exp((-(xx - xx').^2)/(2*prior.sedparams.Lx^2));
+    forecast.Ch = posterior.Ch + S*N*S;
+
+  % TODO: other sediment transport codes will go here...
+  % elseif(strcmp(prior.sedmodel,'vanderA'))
+  %  ....
+  % elseif(strcmp(prior.sedmodel,'dubarbier'))
+  %  ....
+  % elseif(strcmp(prior.sedmodel,'soulsbyVanRijn'))
+  %  ....
+  %
+
+  else
+    error(['The requested sediment transport model is not supported (prior.sedmodel = ' prior.sedmodel ')'])
+  end
+
+end
+
+%---------------------------------------
 % reformat output variables in diagnostics struct, for convenience
 %---------------------------------------
 clear diagnostics
@@ -397,7 +468,7 @@ diagnostics.d  =d  ;
 diagnostics.Lu =Lu ;
 diagnostics.obstype=obstype;
 diagnostics.bkgd=bkgd;
-diagnostics.fcst=fcst;
+diagnostics.pred=pred;
 
 % representer outputs: r.X_Y refers to sensitivity of model input variable Y
 % to delta-perturbations of obs type X
